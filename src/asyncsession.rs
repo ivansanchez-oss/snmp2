@@ -111,12 +111,16 @@ impl AsyncSession {
     #[cfg(feature = "v3")]
     pub async fn init(&mut self) -> Result<()> {
         if let Some(ref mut security) = self.security {
+            println!("RESET ENGINE ID");
             security.reset_engine_id();
+            println!("RESET ENGINE COUNTERS");
             security.reset_engine_counters();
             // send a request to get the engine id
             let req_id = self.req_id.0;
+            println!("BUILD INIT");
             v3::build_init(req_id, &mut self.send_pdu);
             self.req_id += Wrapping(1);
+            println!("SEND AND RCV");
             if let Err(e) = Pdu::from_bytes_inner(
                 Self::send_and_recv(&self.socket, &self.send_pdu, &mut self.recv_buf).await?,
                 Some(security),
@@ -125,6 +129,7 @@ impl AsyncSession {
                     return Err(e);
                 }
             }
+            println!("NEED INIT");
             if security.need_init() {
                 return Err(Error::AuthFailure(v3::AuthErrorKind::NotAuthenticated));
             }
