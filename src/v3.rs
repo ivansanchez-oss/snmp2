@@ -1,4 +1,4 @@
-use std::{fmt, time::Instant};
+    use std::{fmt, time::Instant};
 
 use openssl::{
     hash::{Hasher, MessageDigest},
@@ -569,10 +569,11 @@ impl<'a> Pdu<'a> {
             }
 
             if security.need_auth() {
-                let hmac = security.calculate_hmac(bytes)?;
-
-                println!("HMAC: {:?}",hmac);
                 println!("AUTH PARAMS: {:?}",auth_params);
+                println!("CALCULATING HMAC");
+                let hmac = security.calculate_hmac(bytes)?;
+                println!("HMAC: {:?}",hmac);
+
 
                 if hmac.len() < 12 || hmac[..12] != auth_params {
                     return Err(Error::AuthFailure(AuthErrorKind::SignatureMismatch));
