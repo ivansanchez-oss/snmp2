@@ -563,13 +563,15 @@ impl<'a> Pdu<'a> {
             if auth_params.len() != 12 || auth_params_pos + auth_params.len() > bytes.len() {
                 return Err(Error::ValueOutOfRange);
             }
-            unsafe {
-                let auth_params_ptr = bytes.as_ptr().add(auth_params_pos) as *mut u8;
-                std::ptr::write_bytes(auth_params_ptr, 0, auth_params.len());
+
+            let mut new_bytes = bytes.to_vec();
+            let counter = auth_params_pos + auth_params.len();
+            for i in auth_params_pos..counter {
+                new_bytes[i] = 0;
             }
 
             if security.need_auth() {
-                let hmac = security.calculate_hmac(bytes)?;
+                let hmac = security.calculate_hmac(&new_bytes)?;
 
                 if hmac.len() < 12 || hmac[..12] != auth_params {
                     return Err(Error::AuthFailure(AuthErrorKind::SignatureMismatch));
