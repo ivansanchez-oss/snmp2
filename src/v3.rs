@@ -5,6 +5,7 @@ use openssl::{
     pkey::PKey,
     sign::Signer,
 };
+use ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY;
 
 use crate::{
     asn1,
@@ -221,11 +222,15 @@ impl Security {
         if self.engine_id().is_empty() {
             return Err(Error::AuthFailure(AuthErrorKind::SecurityNotReady));
         }
-        let pkey = PKey::hmac(&self.authoritative_state.auth_key)?;
-        let mut signer = Signer::new(self.auth_protocol.digest(), &pkey)?;
+
         let mut buf = [0; 20];
-        signer.update(data)?;
-        signer.sign(&mut buf)?;
+        let pkey_ring = ring::hmac::Key::new(
+            HMAC_SHA1_FOR_LEGACY_USE_ONLY,
+            &self.authoritative_state.auth_key,
+        );
+
+        let tag = ring::hmac::sign(&pkey_ring, data);
+        buf.copy_from_slice(tag.as_ref());
         Ok(buf)
     }
 
