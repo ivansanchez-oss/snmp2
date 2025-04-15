@@ -146,6 +146,13 @@ impl From<openssl::error::ErrorStack> for Error {
     }
 }
 
+#[cfg(feature = "v3")]
+impl From<ring::error::Unspecified> for Error {
+    fn from(err: ring::error::Unspecified) -> Error {
+        Error::Crypto(err.to_string())
+    }
+}
+
 impl std::error::Error for Error {}
 
 impl From<std::num::TryFromIntError> for Error {

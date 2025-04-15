@@ -1,11 +1,10 @@
 use std::{fmt, time::Instant};
 
-use openssl::{
-    hash::{Hasher, MessageDigest},
-    pkey::PKey,
-    sign::Signer,
+use openssl::hash::{Hasher, MessageDigest};
+use ring::{
+    hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
+    rand::{SecureRandom, SystemRandom},
 };
-use ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY;
 
 use crate::{
     asn1,
@@ -287,7 +286,9 @@ impl Security {
     fn encrypt_des(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         let mut salt = [0; 8];
         salt[..4].copy_from_slice(&u32::try_from(self.engine_boots())?.to_be_bytes());
-        openssl::rand::rand_bytes(&mut salt[4..])?;
+
+        let rng = SystemRandom::new();
+        rng.fill(&mut salt[4..])?;
 
         if data.is_empty() {
             return Ok((vec![], salt.to_vec()));
@@ -335,7 +336,9 @@ impl Security {
         let salt_pos = iv.len();
         iv.resize(iv_len, 0);
 
-        openssl::rand::rand_bytes(&mut iv[salt_pos..])?;
+        let rng = SystemRandom::new();
+        rng.fill(&mut iv[salt_pos..])?;
+
         let key_len = cipher.key_len();
 
         if self.authoritative_state.priv_key.len() < key_len {
