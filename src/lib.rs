@@ -4,6 +4,7 @@
 use std::fmt;
 
 pub mod asn1;
+use aes::cipher::inout;
 pub use asn1::AsnReader;
 #[cfg(feature = "mibs")]
 pub mod mibs;
@@ -149,6 +150,13 @@ impl From<openssl::error::ErrorStack> for Error {
 #[cfg(feature = "v3")]
 impl From<ring::error::Unspecified> for Error {
     fn from(err: ring::error::Unspecified) -> Error {
+        Error::Crypto(err.to_string())
+    }
+}
+
+#[cfg(feature = "v3")]
+impl From<inout::NotEqualError> for Error {
+    fn from(err: inout::NotEqualError) -> Error {
         Error::Crypto(err.to_string())
     }
 }

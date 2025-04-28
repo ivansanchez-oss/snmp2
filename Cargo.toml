@@ -20,6 +20,9 @@ asn1-rs = "0.6"
 snmptools = { version = "^0.1.2", optional = true }
 tokio = { version = "1.36", features = ["net"], optional = true }
 openssl = { version = "0.10", optional = true }
+ring = "0.17.14"
+aes = "0.8.4"
+cfb-mode = "0.8.2"
 
 [dev-dependencies]
 tokio = { version = "=1.36" }

@@ -1,6 +1,9 @@
 use std::{fmt, time::Instant};
 
+use aes::cipher::AsyncStreamCipher;
+use aes::cipher::{generic_array::GenericArray, KeyIvInit};
 use openssl::hash::{Hasher, MessageDigest};
+
 use ring::{
     hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
     rand::{SecureRandom, SystemRandom},
@@ -320,6 +323,38 @@ impl Security {
         Ok((encrypted, salt.to_vec()))
     }
 
+    fn encrypt_aes128cfb(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+        type Aes128CfbEnc = cfb_mode::Encryptor<aes::Aes128>;
+
+        let iv_len = 16;
+        let key_len = 16;
+        let block_size = 16;
+
+        let mut iv = Vec::with_capacity(iv_len);
+        iv.extend_from_slice(&u32::try_from(self.engine_boots())?.to_be_bytes());
+        iv.extend_from_slice(&u32::try_from(self.engine_time())?.to_be_bytes());
+        let salt_pos = iv.len();
+        iv.resize(iv_len, 0);
+
+        let rng = SystemRandom::new();
+        rng.fill(&mut iv[salt_pos..])?;
+
+        if self.authoritative_state.priv_key.len() < key_len {
+            return Err(Error::AuthFailure(AuthErrorKind::KeyLengthMismatch));
+        }
+
+        let generic_key = GenericArray::from_slice(&self.authoritative_state.priv_key[..key_len]);
+        let generic_iv = GenericArray::from_slice(&iv);
+
+        let cipher = Aes128CfbEnc::new(generic_key, generic_iv);
+
+        let mut encrypted = vec![0; data.len() + block_size];
+
+        cipher.encrypt_b2b(data, &mut encrypted[..data.len()])?;
+
+        Ok((encrypted[..data.len()].to_vec(), iv[salt_pos..].to_vec()))
+    }
+
     fn encrypt_aes(
         &self,
         data: &[u8],
@@ -365,7 +400,11 @@ impl Security {
 
     /// encrypts the data
     pub(crate) fn encrypt(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        let Auth::AuthPriv { cipher: cipher_kind, .. } = &self.auth else {
+        let Auth::AuthPriv {
+            cipher: cipher_kind,
+            ..
+        } = &self.auth
+        else {
             return Err(Error::AuthFailure(AuthErrorKind::SecurityNotProvided));
         };
 
@@ -375,7 +414,7 @@ impl Security {
 
         match cipher_kind {
             Cipher::Des => self.encrypt_des(data),
-            Cipher::Aes128 => self.encrypt_aes(data, openssl::symm::Cipher::aes_128_cfb128(), 16),
+            Cipher::Aes128 => self.encrypt_aes128cfb(data),
             Cipher::Aes192 => self.encrypt_aes(data, openssl::symm::Cipher::aes_192_cfb128(), 24),
             Cipher::Aes256 => self.encrypt_aes(data, openssl::symm::Cipher::aes_256_cfb128(), 32),
         }
@@ -427,6 +466,36 @@ impl Security {
         self.decrypt_data_to_plain_buf(crypter, block_size, encrypted)
     }
 
+    fn decrypt_aes128cfb(&mut self, encrypted: &[u8], priv_params: &[u8]) -> Result<()> {
+        type Aes128CfbEnc = cfb_mode::Decryptor<aes::Aes128>;
+
+        let iv_len = 16;
+        let key_len = 16;
+
+        let mut iv = Vec::with_capacity(iv_len);
+        iv.extend_from_slice(&u32::try_from(self.engine_boots())?.to_be_bytes());
+        iv.extend_from_slice(&u32::try_from(self.engine_time())?.to_be_bytes());
+        iv.extend_from_slice(priv_params);
+
+        if iv.len() != iv_len {
+            return Err(Error::AuthFailure(AuthErrorKind::PrivLengthMismatch));
+        }
+
+        if self.authoritative_state.priv_key.len() < key_len {
+            return Err(Error::AuthFailure(AuthErrorKind::KeyLengthMismatch));
+        }
+
+        let generic_key = GenericArray::from_slice(&self.authoritative_state.priv_key[..key_len]);
+        let generic_iv = GenericArray::from_slice(&iv);
+
+        let cipher = Aes128CfbEnc::new(generic_key, generic_iv);
+
+        self.plain_buf.resize(encrypted.len(), 0);
+        cipher.decrypt_b2b(encrypted, &mut self.plain_buf)?;
+
+        Ok(())
+    }
+
     fn decrypt_aes(
         &mut self,
         encrypted: &[u8],
@@ -464,18 +533,23 @@ impl Security {
 
     /// decrypts the data, the result is stored in `self.plain_buf`
     fn decrypt(&mut self, encrypted: &[u8], priv_params: &[u8]) -> Result<()> {
-        let Auth::AuthPriv { cipher: cipher_kind, .. } = &self.auth else {
+        let Auth::AuthPriv {
+            cipher: cipher_kind,
+            ..
+        } = &self.auth
+        else {
             return Err(Error::AuthFailure(AuthErrorKind::SecurityNotProvided));
         };
 
         match cipher_kind {
             Cipher::Des => self.decrypt_des(encrypted, priv_params),
-            Cipher::Aes128 => self.decrypt_aes(
-                encrypted,
-                priv_params,
-                openssl::symm::Cipher::aes_128_cfb128(),
-                16,
-            ),
+            //Cipher::Aes128 => self.decrypt_aes(
+            //    encrypted,
+            //    priv_params,
+            //    openssl::symm::Cipher::aes_128_cfb128(),
+            //    16,
+            //),
+            Cipher::Aes128 => self.decrypt_aes128cfb(encrypted, priv_params),
             Cipher::Aes192 => self.decrypt_aes(
                 encrypted,
                 priv_params,
