@@ -4,10 +4,7 @@ use aes::cipher::AsyncStreamCipher;
 use aes::cipher::{generic_array::GenericArray, KeyIvInit};
 use openssl::hash::{Hasher, MessageDigest};
 
-use ring::{
-    hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
-    rand::{SecureRandom, SystemRandom},
-};
+use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{
     asn1,
@@ -220,20 +217,29 @@ impl Security {
         self.authoritative_state.update_authoritative_engine_time(0);
     }
 
-    fn calculate_hmac(&self, data: &[u8]) -> Result<[u8; 20]> {
+    fn calculate_hmac(&self, data: &[u8]) -> Result<Vec<u8>> {
         if self.engine_id().is_empty() {
             return Err(Error::AuthFailure(AuthErrorKind::SecurityNotReady));
         }
 
-        let mut buf = [0; 20];
-        let pkey_ring = ring::hmac::Key::new(
-            HMAC_SHA1_FOR_LEGACY_USE_ONLY,
-            &self.authoritative_state.auth_key,
-        );
-
-        let tag = ring::hmac::sign(&pkey_ring, data);
-        buf.copy_from_slice(tag.as_ref());
-        Ok(buf)
+        match self.auth_protocol {
+            AuthProtocol::Md5 => {
+                use hmac::{Hmac, Mac};
+                type HmacMd5 = Hmac<md5::Md5>;
+                let mut mac = HmacMd5::new_from_slice(&self.authoritative_state.auth_key)
+                    .map_err(|e| Error::Crypto(e.to_string()))?;
+                mac.update(data);
+                Ok(mac.finalize().into_bytes().to_vec())
+            }
+            _ => {
+                let pkey = ring::hmac::Key::new(
+                    ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
+                    &self.authoritative_state.auth_key,
+                );
+                let tag = ring::hmac::sign(&pkey, data);
+                Ok(tag.as_ref().to_vec())
+            }
+        }
     }
 
     pub(crate) fn update_key(&mut self) -> Result<()> {

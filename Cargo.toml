@@ -23,6 +23,8 @@ openssl = { version = "0.10", optional = true }
 ring = "0.17.14"
 aes = "0.8.4"
 cfb-mode = "0.8.2"
+hmac = "0.12"
+md-5 = "0.10"
 
 [dev-dependencies]
 tokio = { version = "=1.36" }
