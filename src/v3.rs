@@ -1,7 +1,7 @@
 use std::{fmt, time::Instant};
 
 use aes::cipher::AsyncStreamCipher;
-use aes::cipher::{generic_array::GenericArray, KeyIvInit};
+use aes::cipher::{generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use openssl::hash::{Hasher, MessageDigest};
 
 use ring::rand::{SecureRandom, SystemRandom};
@@ -309,24 +309,25 @@ impl Security {
 
         let des_key = &self.authoritative_state.priv_key[..8];
         let pre_iv = &self.authoritative_state.priv_key[8..16];
-        let cipher = openssl::symm::Cipher::des_cbc();
 
         let mut iv = [0; 8];
         for (i, (a, b)) in pre_iv.iter().zip(salt.iter()).enumerate() {
             iv[i] = a ^ b;
         }
 
-        let mut encrypted = vec![0; data.len() + cipher.block_size()];
-        let mut crypter =
-            openssl::symm::Crypter::new(cipher, openssl::symm::Mode::Encrypt, des_key, Some(&iv))?;
-        let mut count = crypter.update(data, &mut encrypted)?;
+        type DesCbcEnc = cbc::Encryptor<des::Des>;
+        let encryptor = DesCbcEnc::new(
+            GenericArray::from_slice(des_key),
+            GenericArray::from_slice(&iv),
+        );
 
-        if count < encrypted.len() {
-            count += crypter.finalize(&mut encrypted[count..])?;
-        }
+        let mut buf = vec![0u8; data.len() + 8];
+        buf[..data.len()].copy_from_slice(data);
+        let encrypted = encryptor
+            .encrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf, data.len())
+            .map_err(|e| Error::Crypto(e.to_string()))?;
 
-        encrypted.truncate(count);
-        Ok((encrypted, salt.to_vec()))
+        Ok((encrypted.to_vec(), salt.to_vec()))
     }
 
     fn encrypt_aes128cfb(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -452,10 +453,7 @@ impl Security {
             return Err(Error::AuthFailure(AuthErrorKind::KeyLengthMismatch));
         }
 
-        let cipher = openssl::symm::Cipher::des_cbc();
-        let block_size = 8;
-
-        if encrypted.len() % block_size > 0 {
+        if encrypted.len() % 8 > 0 {
             return Err(Error::AuthFailure(AuthErrorKind::PayloadLengthMismatch));
         }
 
@@ -467,9 +465,19 @@ impl Security {
             iv[i] = a ^ b;
         }
 
-        let crypter =
-            openssl::symm::Crypter::new(cipher, openssl::symm::Mode::Decrypt, des_key, Some(&iv))?;
-        self.decrypt_data_to_plain_buf(crypter, block_size, encrypted)
+        type DesCbcDec = cbc::Decryptor<des::Des>;
+        let decryptor = DesCbcDec::new(
+            GenericArray::from_slice(des_key),
+            GenericArray::from_slice(&iv),
+        );
+
+        let mut buf = encrypted.to_vec();
+        let decrypted = decryptor
+            .decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf)
+            .map_err(|e| Error::Crypto(e.to_string()))?;
+        self.plain_buf = decrypted.to_vec();
+
+        Ok(())
     }
 
     fn decrypt_aes128cfb(&mut self, encrypted: &[u8], priv_params: &[u8]) -> Result<()> {
